@@ -25,6 +25,9 @@ typedef struct {
   bool is_alive;
 } ProcessData;
 
+// variable global del parámetro <time_max>
+int time_max = -1;
+
 ProcessData processes_array[1024]; //movi esto para arriba para que sea global y el sigchld_handler pueda usarlo
 
 // globales para el modo shutdown
@@ -75,6 +78,15 @@ void sigchld_handler(int sig) {
 int main(int argc, char const *argv[])
 {
   set_buffer(); // No borrar
+
+  // <time_max>
+  if (argc > 1) {
+    time_max = atoi(argv[1]);
+    // valor inválido, tiempo ilimitado por defecto
+    if (time_max <= 0) {
+      time_max = -1; 
+    }
+  }
 
   //inicializamos el signal handler para actualizar el array cuando un proceso termina
   signal(SIGCHLD, sigchld_handler);
@@ -147,6 +159,25 @@ int main(int argc, char const *argv[])
           processes_array[slot].exit_code = -1;
           processes_array[slot].signal_value = -1;
           processes_array[slot].is_alive = true;
+
+          // si hay límite de tiempo, crear watcher para terminar el proceso si excede time_max
+          if (time_max > 0) {
+            pid_t child_pid = process;
+            int child_slot = slot;
+            // crear un proceso watcher
+            pid_t watcher = fork();
+            if (watcher == 0) {
+              // proceso watcher
+              sleep(time_max);
+              // verifica si el proceso sigue vivo
+              if (kill(child_pid, 0) == 0) {
+                printf("Proceso %s con PID %d excedió el tiempo máximo (%d s)\n", processes_array[child_slot].name, child_pid, time_max);
+                kill(child_pid, SIGKILL);
+              }
+              exit(0);
+            }
+            // el padre no hace nada con watcher
+          }
         }
       }
       else {
@@ -304,7 +335,28 @@ int main(int argc, char const *argv[])
 
     // emergency
     else if (strcmp(input[0], "emergency") == 0) {
-      printf("¡Emergencia!\n DCControl finalizado.\n PID %d\n", getpid());
+      // Enviar SIGKILL a todos los procesos vivos y actualizar end_time si siguen vivos
+      for (int i = 0; i < 1024; i++) {
+        if (processes_array[i].is_alive) {
+          kill(processes_array[i].pid, SIGKILL);
+          processes_array[i].end_time = time(NULL); // Actualiza end_time manualmente
+          processes_array[i].is_alive = false; // Marca como no vivo
+        }
+      }
+      printf("¡Emergencia!\nDCControl finalizado.\n");
+      printf("%-8s %-10s %-20s %-12s %-13s\n", "PID", "Nombre", "Tiempo de ejecución", "Exit code", "Signal Value");
+      for (int i = 0; i < 1024; i++) {
+        if (processes_array[i].pid != 0) {
+          long runtime = processes_array[i].end_time > 0 ? (processes_array[i].end_time - processes_array[i].start_time) : (time(NULL) - processes_array[i].start_time);
+          printf("%-8d %-10s %-20ld %-12d %-13d\n",
+                processes_array[i].pid,
+                processes_array[i].name,
+                runtime,
+                processes_array[i].exit_code,
+                processes_array[i].signal_value);
+        }
+      }
+      exit(EXIT_SUCCESS);
     }
 
     else {
