@@ -4,8 +4,8 @@
 #include "../input_manager/manager.h"
 
 #include "main.h"
-#include "string.h"
-#include "stdbool.h"
+#include <string.h>
+#include <stdbool.h>
 
 #include <sys/types.h>
 #include <unistd.h>
@@ -26,6 +26,10 @@ typedef struct {
 } ProcessData;
 
 ProcessData processes_array[1024]; //movi esto para arriba para que sea global y el sigchld_handler pueda usarlo
+
+// globales para el modo shutdown
+bool shutdown_mode = false;
+time_t shutdown_start_time = 0;
 
 // busca el primer espacio libre en el array, osea donde el pid == 0
 int find_free_slot(ProcessData *processes_array) {
@@ -80,12 +84,37 @@ int main(int argc, char const *argv[])
     processes_array[i].pid = 0;
     processes_array[i].exit_code = -1;
     processes_array[i].signal_value = -1;
-    processes_array[i].is_alive = false;
-}
+    processes_array[i].is_alive = false; 
+  }
 
 
   // Loop de comandos
   while (true) {
+    // MODO SHUTDOWN: si hay modo shutdown, verifica si han pasado 10 segundos
+    if (shutdown_mode) {
+      if (difftime(time(NULL), shutdown_start_time) >= 10) {
+        // envia SIGKILL a procesos vivos
+        for (int i = 0; i < 1024; i++) {
+          if (processes_array[i].is_alive) {
+            kill(processes_array[i].pid, SIGKILL);
+          }
+        }
+        // imprimir estadísticas y terminar
+        printf("DDControl finalizado.\n");
+        printf("%-8s %-10s %-20s %-12s %-13s\n", "PID", "Nombre", "Tiempo de ejecución", "Exit code", "Signal Value");
+        for (int i = 0; i < 1024; i++) {
+          if (processes_array[i].pid != 0) {
+            printf("%-8d %-10s %-20ld %-12d %-13d\n",
+                  processes_array[i].pid,
+                  processes_array[i].name,
+                  processes_array[i].end_time - processes_array[i].start_time,
+                  processes_array[i].exit_code,
+                  processes_array[i].signal_value);
+          }
+        }
+        exit(EXIT_SUCCESS);
+      }
+    }
     char** input = read_user_input();
     printf("%s\n", input[0]);
 
@@ -140,7 +169,6 @@ int main(int argc, char const *argv[])
               "PID", "Nombre", "Tiempo de ejecución", "Exit code", "Signal Value");
 
         for (int i = 0; i < 1024; i++) {
-
             //esto es para ver el tiempo de ejecucion que lleva un proceso que aun no ha terminado
             if (processes_array[i].pid != 0) {
               long runtime;
@@ -166,30 +194,35 @@ int main(int argc, char const *argv[])
           }
         }
         exit(EXIT_SUCCESS);
+      }
     }
-  }
 
     // abort <time>
     else if (strcmp(input[0], "abort") == 0) {
-      //convertimos el time ingresado a un int
-      int seconds = atoi(input[1]);
-
-      //esto es para ver los procesos que estaban vivos al momento de ejecutar el comando abort
-      pid_t to_kill[1024];  //aqui guardamos los id de los procesos a abortar
-      int cantidad_alive = 0;
-
-      //verificamos si hay procesos alive
-      for (int i = 0; i < 1024; i++) {
-          if (processes_array[i].pid != 0 && processes_array[i].is_alive) {
-            //guardamos el pid del proceso en process_array y aumentamos cantidad_alive en 1
-            to_kill[cantidad_alive++] = processes_array[i].pid;
-          }
-      }
-      
-      //si no hay ningun proceso alive entonces imprime que no hay procesos en ejecucion
-      if (cantidad_alive == 0) {
-          printf("No hay procesos en ejecución. Abort no se puede ejecutar.\n");
+      // si se está en modo shutdown, se ignoran los aborts
+      if (shutdown_mode) {
+        printf("abort ignorado, shotdown en proceso.\n");
       } else {
+
+        //convertimos el time ingresado a un int
+        int seconds = atoi(input[1]);
+
+        //esto es para ver los procesos que estaban vivos al momento de ejecutar el comando abort
+        pid_t to_kill[1024];  //aqui guardamos los id de los procesos a abortar
+        int cantidad_alive = 0;
+
+        //verificamos si hay procesos alive
+        for (int i = 0; i < 1024; i++) {
+            if (processes_array[i].pid != 0 && processes_array[i].is_alive) {
+              //guardamos el pid del proceso en process_array y aumentamos cantidad_alive en 1
+              to_kill[cantidad_alive++] = processes_array[i].pid;
+            }
+        }
+        
+        //si no hay ningun proceso alive entonces imprime que no hay procesos en ejecucion
+        if (cantidad_alive == 0) {
+            printf("No hay procesos en ejecución. Abort no se puede ejecutar.\n");
+        } else {
           // esperamos los segundos que se indicaron en <time>
           sleep(seconds);
 
@@ -225,11 +258,48 @@ int main(int argc, char const *argv[])
             }
           }
         }
+      }
     }
 
     // shutdown
     else if (strcmp(input[0], "shutdown") == 0) {
-     
+      // verificar si hay procesos vivos
+      bool any_alive = false;
+      for (int i = 0; i < 1024; i++) {
+        if (processes_array[i].is_alive) {
+          any_alive = true;
+          break;
+        }
+      }
+
+      if (!any_alive) {
+        // no hay procesos vivos, imprimir estadísticas y terminar inmediatamente
+        printf("DDControl finalizado.\n");
+        printf("%-8s %-10s %-20s %-12s %-13s\n", "PID", "Nombre", "Tiempo de ejecución", "Exit code", "Signal Value");
+        for (int i = 0; i < 1024; i++) {
+          if (processes_array[i].pid != 0) {
+            printf("%-8d %-10s %-20ld %-12d %-13d\n",
+                  processes_array[i].pid,
+                  processes_array[i].name,
+                  processes_array[i].end_time - processes_array[i].start_time,
+                  processes_array[i].exit_code,
+                  processes_array[i].signal_value);
+          }
+        }
+        exit(EXIT_SUCCESS);
+      } else {
+        // hay procesos vivos, enviar SIGINT a todos los que se esten ejecutando
+        for (int i = 0; i < 1024; i++) {
+          if (processes_array[i].is_alive) {
+            kill(processes_array[i].pid, SIGINT);
+          }
+        }
+        // activar modo shutdown y guardar tiempo de inicio
+        shutdown_mode = true;
+        shutdown_start_time = time(NULL);
+        // debug: printf("shutdown iniciado. El programa aceptará comandos por 10 segundos antes de finalizar.\n");
+        // el resto de la lógica se maneja en el loop principal
+      }
     }
 
     // emergency
