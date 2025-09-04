@@ -238,58 +238,70 @@ int main(int argc, char const *argv[])
         //convertimos el time ingresado a un int
         int seconds = atoi(input[1]);
 
-        //esto es para ver los procesos que estaban vivos al momento de ejecutar el comando abort
-        pid_t to_kill[1024];  //aqui guardamos los id de los procesos a abortar
-        int cantidad_alive = 0;
-
-        //verificamos si hay procesos alive
-        for (int i = 0; i < 1024; i++) {
-            if (processes_array[i].pid != 0 && processes_array[i].is_alive) {
-              //guardamos el pid del proceso en process_array y aumentamos cantidad_alive en 1
-              to_kill[cantidad_alive++] = processes_array[i].pid;
-            }
-        }
+        pid_t abort_pid = fork();
         
-        //si no hay ningun proceso alive entonces imprime que no hay procesos en ejecucion
-        if (cantidad_alive == 0) {
-            printf("No hay procesos en ejecución. Abort no se puede ejecutar.\n");
-        } else {
-          // esperamos los segundos que se indicaron en <time>
-          sleep(seconds);
+        if (abort_pid == 0) {
 
-          // imprimimos la "cabecera" para mostrar los procesos que luego del sleep siguen ejecutandose
-          printf("Abort cumplido.\n");
-          printf("%-8s %-10s %-20s %-12s %-13s\n", 
-                "PID", "Nombre", "Tiempo de ejecución", "Exit code", "Signal Value");
+          //esto es para ver los procesos que estaban vivos al momento de ejecutar el comando abort
+          pid_t to_kill[1024];  //aqui guardamos los id de los procesos a abortar
+          int cantidad_alive = 0;
 
-          for (int j = 0; j < cantidad_alive; j++) {
-            pid_t pid = to_kill[j];  //iteramos sobre la lista de los procesos a abortar
+          //verificamos si hay procesos alive
+          for (int i = 0; i < 1024; i++) {
+              if (processes_array[i].pid != 0 && processes_array[i].is_alive) {
+                //guardamos el pid del proceso en process_array y aumentamos cantidad_alive en 1
+                to_kill[cantidad_alive++] = processes_array[i].pid;
+              }
+          }
+          
+          //si no hay ningun proceso alive entonces imprime que no hay procesos en ejecucion
+          if (cantidad_alive == 0) {
+              printf("No hay procesos en ejecución. Abort no se puede ejecutar.\n");
+          } else {
+            // esperamos los segundos que se indicaron en <time>
+            sleep(seconds);
 
-            //buscamos en el process_array el proceso con el pid que necesitamos
-            for (int i = 0; i < 1024; i++) {
-              //aqui verificamos que si encontramos el proceso con ese pid que aún siga vivo
+            // imprimimos la "cabecera" para mostrar los procesos que luego del sleep siguen ejecutandose
+            printf("Abort cumplido.\n");
+            printf("%-8s %-10s %-20s %-12s %-13s\n", 
+                  "PID", "Nombre", "Tiempo de ejecución", "Exit code", "Signal Value");
 
-              if (processes_array[i].pid == pid && processes_array[i].is_alive) {
-                //calculamos el tiempo de ejecución actual, ya que cmo no ha terminado no tiene un end_time
-                long runtime = time(NULL) - processes_array[i].start_time;
+            for (int j = 0; j < cantidad_alive; j++) {
+              pid_t pid = to_kill[j];  //iteramos sobre la lista de los procesos a abortar
 
-                //imprimimos la información del proceso
-                printf("%-8d %-10s %-20ld %-12d %-13d\n",
-                        processes_array[i].pid,
-                        processes_array[i].name,
-                        runtime,
-                        processes_array[i].exit_code,
-                        processes_array[i].signal_value);
+              //buscamos en el process_array el proceso con el pid que necesitamos
+              for (int i = 0; i < 1024; i++) {
+                //aqui verificamos que si encontramos el proceso con ese pid que aún siga vivo
 
-                // enviamos un sigterm para abortar el proceso, si hubo error retorna -1 (nse en que casos podria dar error)
-                if (kill(processes_array[i].pid, SIGTERM) == -1) {
-                    perror("Error con el SIGTERM");
+                if (processes_array[i].pid == pid && processes_array[i].is_alive) {
+                  //calculamos el tiempo de ejecución actual, ya que cmo no ha terminado no tiene un end_time
+                  long runtime = time(NULL) - processes_array[i].start_time;
+
+                  //imprimimos la información del proceso
+                  printf("%-8d %-10s %-20ld %-12d %-13d\n",
+                          processes_array[i].pid,
+                          processes_array[i].name,
+                          runtime,
+                          processes_array[i].exit_code,
+                          processes_array[i].signal_value);
+
+                  // enviamos un sigterm para abortar el proceso, si hubo error retorna -1 (nse en que casos podria dar error)
+                  if (kill(processes_array[i].pid, SIGTERM) == -1) {
+                      perror("Error con el SIGTERM");
+                  }
+                  break;
                 }
               }
             }
           }
-        }
+          exit(EXIT_SUCCESS);
+        } else if (abort_pid > 0) {
+          // proceso padre no hace nada
+        } 
+        else {
+          perror("fork falló");
       }
+    }
     }
 
     // shutdown
